@@ -1,0 +1,322 @@
+action:
+  action_limit_low:
+  - -3.14
+  - -0.26
+  - -0.87
+  - -0.43
+  - -0.43
+  - -3.14
+  - -0.26
+  - -0.87
+  action_limit_up:
+  - 2.53
+  - 2.05
+  - 0.52
+  - 0.43
+  - 0.43
+  - 2.53
+  - 2.05
+  - 0.52
+  high_ranges:
+  - 0.43
+  - 0.43
+  - 2.53
+  - 2.05
+  - 0.52
+  - 0.43
+  - 0.43
+  - 2.53
+  - 2.05
+  - 0.52
+  inc_high_ranges:
+  - 3.5
+  - 3.5
+  - 12.0
+  - 12.0
+  - 12.0
+  - 12.0
+  - 12.0
+  - 12.0
+  - 12.0
+  - 12.0
+  - 12.0
+  - 12.0
+  inc_low_ranges:
+  - 0.5
+  - 0.5
+  - -12.0
+  - -12.0
+  - -12.0
+  - -12.0
+  - -12.0
+  - -12.0
+  - -12.0
+  - -12.0
+  - -12.0
+  - -12.0
+  low_ranges:
+  - -0.43
+  - -0.43
+  - -3.14
+  - -0.26
+  - -0.87
+  - -0.43
+  - -0.43
+  - -3.14
+  - -0.26
+  - -0.87
+  ref_joint_pos:
+  - 0.0
+  - 0.0
+  - -0.2
+  - 0.4
+  - -0.2
+  - 0.0
+  - 0.0
+  - -0.2
+  - 0.4
+  - -0.2
+  - 0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  use_increment: true
+algorithm:
+  desired_kl: 0.01
+  discount_factor: 0.993
+  entropy_coef: 0.001
+  eps_clip: 0.2
+  gae_lambda: 0.95
+  learning_rate: 0.001
+  max_grad_norm: 1.0
+  num_learning_epochs: 5
+  num_mini_batches: 4
+  schedule: adaptive
+  use_clipped_value_loss: true
+  value_loss_coef: 1.0
+command:
+  ang_vel_yaw_range:
+  - 0
+  - 0
+  curriculum: false
+  heading_command: false
+  heading_range:
+  - 0
+  - 0
+  lin_vel_x_range:
+  - 0.3
+  - 0.7
+  lin_vel_y_range:
+  - 0.0
+  - 0.0
+  max_curriculum: 1.0
+  num_commands: 4
+  resampling_time: 4.0
+domain_rand:
+  added_body_inertia_range:
+  - 0.95
+  - 1.55
+  added_body_mass: false
+  added_body_mass_com_high:
+  - 0.01
+  - 0.01
+  - 0.01
+  added_body_mass_com_low:
+  - -0.01
+  - -0.01
+  - -0.01
+  added_body_mass_range:
+  - -0.5
+  - 0.5
+  added_damping_range:
+  - 0.8
+  - 1.2
+  added_friction_range:
+  - 0.8
+  - 1.2
+  added_inertia_range:
+  - 0.9
+  - 1.2
+  added_joint_static_error: 0.01
+  added_mass_com_high:
+  - 0.01
+  - 0.01
+  - 0.01
+  added_mass_com_low:
+  - -0.01
+  - -0.01
+  - -0.01
+  added_mass_range:
+  - 0.9
+  - 1.2
+  delay_angle_ranges:
+  - 5
+  - 10
+  delay_joint_ranges:
+  - 10
+  - 20
+  delay_observation: false
+  delay_rate_ranges:
+  - 10
+  - 20
+  friction_range:
+  - 0.65
+  - 1.0
+  gains_range:
+  - 0.9
+  - 1.3
+  max_push_force: 100
+  push_duration_step: 200
+  push_interval_s: 3.0
+  push_robots: false
+  randomize_body_com: false
+  randomize_damping: false
+  randomize_friction: false
+  randomize_gains: false
+  randomize_joint_static_error: false
+  randomize_mass: false
+  randomize_mass_com: false
+  randomize_torque: false
+  torque_range:
+  - 0.95
+  - 1.05
+env:
+  cfg: loc
+  env_spacing: 3.0
+  episode_length_s: 10
+  num_envs: 8192
+  send_timeouts: true
+  task: LocomotionTask
+init_state:
+  ang_vel:
+  - 0.0
+  - 0.0
+  - 0.0
+  lin_vel:
+  - 0.0
+  - 0.0
+  - 0.0
+  num_legs: 2
+  pos:
+  - 0.0
+  - 0.0
+  - 1.06
+  random_rot: true
+  reset_joint_pos:
+  - 0.0
+  - 0.0
+  - -0.2
+  - 0.4
+  - -0.2
+  - 0.0
+  - 0.0
+  - -0.2
+  - 0.4
+  - -0.2
+  - 0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  rot:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+noise_values:
+  ang_vel: 0.2
+  dof_pos: 0.01
+  dof_vel: 0.1
+  gravity: 0.3
+  randomize_noise: false
+pd_gains:
+  damping:
+    ankle: 7.0
+    elbow: 2.0
+    hip_pitch: 8.0
+    hip_roll: 8.0
+    hip_yaw: 8.0
+    knee: 9.0
+    shoulder: 2.0
+    torso: 2.0
+  decimation: 10
+  stiffness:
+    ankle: 270
+    elbow: 200
+    hip_pitch: 250
+    hip_roll: 290
+    hip_yaw: 290
+    knee: 290
+    shoulder: 200
+    torso: 300
+policy:
+  activation: relu
+  hidden_layers:
+  - 512
+  - 256
+  name: simple_policy
+  num_actions: 12
+  num_critic_obs: 44
+  num_observations: 44
+runner:
+  epoch: 0
+  max_iterations: 2000
+  name: try_x2
+  num_steps_per_env: 24
+  save_interval: 200
+  seed: 1
+terrain:
+  border_size: 5
+  curriculum: false
+  dynamic_friction: 1.0
+  horizontal_scale: 0.1
+  max_init_terrain_level: 3
+  measure_heights: false
+  measured_points_x:
+  - -0.05
+  - 0
+  - 0.05
+  measured_points_y:
+  - -0.05
+  - 0
+  - 0.05
+  mesh_type: plane
+  num_cols: 20
+  num_rows: 20
+  restitution: 0.5
+  selected: false
+  slope_treshold: 0.0
+  static_friction: 1.0
+  terrain_kwargs: null
+  terrain_length: 8
+  terrain_proportions:
+  - 0.1
+  - 0.2
+  - 0.3
+  - 0.2
+  - 0.2
+  terrain_width: 8
+  vertical_scale: 0.01
+viewer:
+  fixed_offset:
+  - 0.0
+  - 3.0
+  - 1.6
+  fixed_robot_id: 0
+  lookat:
+  - 0.0
+  - 0
+  - 1.5
+  pos:
+  - 3
+  - 3
+  - 2.0
