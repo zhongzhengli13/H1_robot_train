@@ -77,7 +77,8 @@ class LocomotionTask(BaseTask):
             num_envs=self.num_envs,
             num_legs=self.num_legs,
             device=self.device,
-        )  # 维护每条腿的 相位 φ；判断：哪条腿在支撑（support），哪条腿在摆动（swing）。φ∈[0,π)  → 支撑相；φ∈[π,2π) → 摆动相
+            # 维护每条腿的 相位 φ；判断：哪条腿在支撑（support），哪条腿在摆动（swing）。φ∈[0,π)  → 支撑相；φ∈[π,2π) → 摆动相
+        )
         self.phase_modulator.reset(
             convert_phi=self.convert_phi,
             env_ids=torch.arange(self.num_envs),
@@ -341,7 +342,8 @@ class LocomotionTask(BaseTask):
             # 格式：randint_like(input, low=0, high, \*, dtype=None, layout=torch.strided, device=None, requires_grad=False, memory_format=torch.preserve_format) -> Tensor
             torch.randint_like(
                 self.env.terrain_levels[env_ids], self.env.max_terrain_level
-            ),  # 下届默认为0；self.env.terrain_levels[env_ids]对应的是input（只拿它的“外壳”——shape、dtype、device——作为生成新张量的模板，完全不看里面的数值。；high对应的是 self.env.max_terrain_level
+                # 下届默认为0；self.env.terrain_levels[env_ids]对应的是input（只拿它的“外壳”——shape、dtype、device——作为生成新张量的模板，完全不看里面的数值。；high对应的是 self.env.max_terrain_level
+            ),
             torch.clip(
                 self.env.terrain_levels[env_ids], 0
             ),  # 地形等级最小是 0（最平地）
@@ -930,23 +932,26 @@ class LocomotionTask(BaseTask):
             )
             * balance_rew
         )  # exp(-k * (cmd_vx - real_vx)^2) * balance_rew #原始为4.0/...
+
+        # 原始
+        # yaw_rate_rew = (
+        #     torch.exp(
+        #         -torch.clip(10 / lin_vel_x_norm, min=1.5, max=6.0)
+        #         * (self.commands[:, [2]] - self.env.base_ang_vel[:, [2]]) ** 2
+        #     )
+        #     * balance_rew
+        # )  # exp(-k * (cmd_yaw - real_yaw)^2) * balance_rew #原始2.5/...
+        # ggg
         yaw_rate_rew = (
             torch.exp(
                 -torch.clip(10 / lin_vel_x_norm, min=1.5, max=6.0)
                 * (self.commands[:, [2]] - self.env.base_ang_vel[:, [2]]) ** 2
             )
             * balance_rew
-        )  # exp(-k * (cmd_yaw - real_yaw)^2) * balance_rew #原始2.5/...
+        )
+        # 追加线性惩罚（去掉 static_flag 约束，始终生效）
+        yaw_rate_rew -= 8.0 * torch.abs(self.env.base_ang_vel[:, [2]])
 
-        # # 【新增】线性惩罚项！防止它歪头。#修改
-        # yaw_rate_rew -= 1.0 * torch.abs(self.commands[:, [2]] - self.env.base_ang_vel[:, [2]])
-        # # ------------------- 修改结束 -------------------
-
-        # stride_rew = torch.abs(self.env.foot_pos_hd[:, [0]] - self.env.foot_pos_hd[:, [3]]).clip(max=0.5) / 0.5
-        # stride_rew *= self.static_flag
-
-        # 找到这行代码：lateral_vel_rew += (-0.1 / lin_vel_x_norm ...) #修改
-        # 把它注释掉或者删除，因为我们上面已经加了更强的线性惩罚，不需要这个弱惩罚了。
         lateral_vel_rew += (
             -0.1
             / lin_vel_x_norm
@@ -1185,7 +1190,8 @@ class LocomotionTask(BaseTask):
                 keepdim=True,
             )
             * self.static_flag
-        )  # [:, :, :2]-》平面速度，vx && vy #torch.norm(self.env.foot_vel[... , :2], dim=-1)->slip_speed #命令速度越小，对脚掌在地面上的 任何二维滑移 越不能容忍。
+            # [:, :, :2]-》平面速度，vx && vy #torch.norm(self.env.foot_vel[... , :2], dim=-1)->slip_speed #命令速度越小，对脚掌在地面上的 任何二维滑移 越不能容忍。
+        )
 
         foot_vz_rew = (
             -0.1
@@ -1409,7 +1415,8 @@ class LocomotionTask(BaseTask):
         rew_dict = dict(
             balance=balance_rew * 0.5,
             fwd_vel=forward_vel_rew * 5.5,
-            yaw_rat=yaw_rate_rew * 2,
+            # yaw_rat=yaw_rate_rew * 2, #原始
+            yaw_rat=yaw_rate_rew * 3,  # ggg
             lateral_vel=lateral_vel_rew * 4,
             vertical_vel=vertical_vel_rew * 0.5,
             ang_vel=ang_vel_rew * 0.8,
