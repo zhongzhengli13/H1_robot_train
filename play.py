@@ -70,7 +70,7 @@ def play(args):
     cfg.noise_values.randomize_noise = False
     # 修改
     cfg.init_state.random_rot = False  # 关闭随机旋转，避免初始倾斜导致掉落
-    cfg.init_state.pos[2] = 1.065  # 降低初始高度
+    cfg.init_state.pos[2] = 1.051 # 降低初始高度
     #结束
     sim_params = parse_sim_params(args, class_to_dict(cfg.sim))
     env = LeggedRobotEnv(cfg=cfg,

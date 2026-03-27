@@ -595,194 +595,6 @@ class LocomotionTask(BaseTask):
         self.action_history.append(act.clone())
         return act
 
-    # # def _resample_commands(self, env_ids):
-    # #     """Randomly select commands of some environments
-    # #     # Args:
-    # #     #     env_ids (List[int]): Environments ids for which new commands are needed
-    # #     #"""
-    # #     # x vel, y vel, yaw vel, heading
-    # #     case_num = []
-    # #     if (
-    # #         self.command_cfgs["lin_vel_x_range"][1] > 0
-    # #     ):  # lin_vel_x_range = [-0.1, 0.1]  # 最多向前：0.1 m/s;最多向后：0.1 m/s
-    # #         case_num.append(0)
-    # #     elif self.command_cfgs["lin_vel_y_range"][1] > 0:
-    # #         case_num.append(1)
-    # #     # 模式0：只前进或者后退
-    # #     # 模式1:只横向运动
-    # #     chosen = random.choice(case_num)
-
-    # #     self.commands[env_ids, :] = torch.zeros(
-    # #         len(env_ids),
-    # #         self.cfg.command.num_commands,
-    # #         dtype=torch.float,
-    # #         device=self.device,
-    # #         requires_grad=False,
-    # #     )  # 避免command残留
-    # #     # lin_vel_x_range = [-0.1, 0.1]  # 最多向前：0.1 m/s;最多向后：0.1 m/s
-    # #     if chosen == 0:
-    # #         self.commands[env_ids, 0] = torch_rand_float(
-    # #             self.command_cfgs["lin_vel_x_range"][0],  # -0。1
-    # #             self.command_cfgs["lin_vel_x_range"][1],  # 0.1
-    # #             (len(env_ids), 1),
-    # #             device=self.device,
-    # #         ).squeeze(
-    # #             1
-    # #         )  # lower,upper,shape,device
-    # #     elif chosen == 1:
-    # #         self.commands[env_ids, 1] = torch_rand_float(
-    # #             self.command_cfgs["lin_vel_y_range"][0],
-    # #             self.command_cfgs["lin_vel_y_range"][1],
-    # #             (len(env_ids), 1),
-    # #             device=self.device,
-    # #         ).squeeze(1)
-    # #     self.commands[env_ids, 2] = torch_rand_float(
-    # #         self.command_cfgs["ang_vel_yaw_range"][0],
-    # #         self.command_cfgs["ang_vel_yaw_range"][1],
-    # #         (len(env_ids), 1),
-    # #         device=self.device,
-    # #     ).squeeze(1)
-    # #     # for i in range(len(env_ids)):
-    # #     #     if random.random() > 0.5:
-    # #     #         self.commands[i, 2] = 0
-    # #     #         self.commands[i, 0] = 0
-
-    # #     if self.cfg.command.heading_command:
-    # #         self.commands[env_ids, 3] = torch_rand_float(
-    # #             self.command_cfgs["heading_range"][0],
-    # #             self.command_cfgs["heading_range"][1],
-    # #             (len(env_ids), 1),
-    # #             device=self.device,
-    # #         ).squeeze(1)  # len(env_ids)指的是本次需要更新的环境数量 # .squeeze(1)指的是删除size=1的维度
-    # #         forward = quat_apply(self.env.base_quat, self.env.forward_vec)
-    # #         heading = torch.atan2(forward[:, 1], forward[:, 0])
-    # #         self.commands[:, 2] = torch.clip(
-    # #             0.5 * wrap_to_pi(self.commands[:, 3] - heading), -1.0, 1.0
-    # #         )
-    # #     # =================================================================================
-    # #     # ### [新增/修改] 关键修复：显式添加“锚点”环境 ###
-    # #     # 即使 loc.py 里速度设为了 0.4~1.0，这里也强制前 400 个环境（约10%）保持静止。
-    # #     # 这就是防止“课程崩溃”和“摔倒”的关键辅助轮。
-    # #     # =================================================================================
-    # #     static_env_count = 400  # 固定前 400 个环境用于练习站立
-    # #     # 找出本次需要重置的 ID 中，属于前 400 号的那些
-    # #     static_indices = env_ids[env_ids < static_env_count]
-
-    # #     if len(static_indices) > 0:
-    # #         self.commands[static_indices, :] = 0.0  # 强制设为 0（静止）
-    # #     # =================================================================================
-
-    # #     # 修改 删除
-    # #     # self.commands[0:220, [0, 2]] = 0.0
-    # #     # index = random.randint(400, 3800)
-    # #     # self.commands[index: index + 10, [0, 2]] = 0.0
-
-    # #     # self.commands[index + 10: index + 20, [0]] = 0.0
-    # #     # self.commands[index + 25: index + 35, [0]] = -0.4
-    # #     # 结束
-    # #     # self.commands[index+20:index+30, [2]] = 0.
-
-    # #     # self.commands[:, [0]] = 0.
-    # #     # self.commands[:, [2]] = 0.
-    # #     self.command_boundary = 0.11
-    # #     # self.command_boundary = 10.00000001
-    # #     # self.low_command = torch.logical_and((torch.abs(self.commands[:, [0]]) < self.command_boundary),
-    # #     #                                      (torch.abs(self.commands[:, [2]]) < self.command_boundary))
-    # #     # self.high_command = torch.logical_not(self.low_command)
-
-    # #     self.static_flag[env_ids] = torch.where(
-    # #         torch.norm(self.commands[env_ids, :3], dim=1, keepdim=True) < 0.11,
-    # #         False,
-    # #         True,
-    # #     ).float()
-    # #     self.commands[env_ids, :3] *= self.static_flag[env_ids]
-
-    # #     self.commands[env_ids, 0:1] *= torch.where(
-    # #         torch.norm(self.commands[env_ids, 0:1],
-    # #                    dim=1, keepdim=True) < 0.11,
-    # #         False,
-    # #         True,
-    # #     ).float()
-    # #     self.commands[env_ids, 2:3] *= torch.where(
-    # #         torch.norm(self.commands[env_ids, 2:3],
-    # #                    dim=1, keepdim=True) < 0.11,
-    # #         False,
-    # #         True,
-    # #     ).float()
-    # #     # self.commands[env_ids, :2] *= torch.where(torch.norm(self.commands[env_ids, :2], dim=1, keepdim=True) < 0.2, False,
-    # #     #                                           True).float()  # True -> remain same; False -> zero
-    # #     #
-    # #     # self.resampling_interval = int(2 / self.env.dt)
-    # #     # vx_cmd_list = [-1, -0.5, 1, 2., 3.]
-    # #     # yaw_rate_cmd_list = [-0.5, 0.5] * 6
-    # #     # self.commands[:, [0]] = vx_cmd_list[self.cmd_id]
-    # #     # self.commands[:, [2]] = yaw_rate_cmd_list[self.cmd_id]
-    # #     # if self.cmd_id < len(vx_cmd_list) - 1:
-    # #     #     self.cmd_id += 1
-    # def _resample_commands(self, env_ids):
-    #     """Randomly select commands of some environments
-    #     Args:
-    #         env_ids (List[int]): Environments ids for which new commands are needed
-    #     """
-    #     # --- 1. 初始化命令容器 ---
-    #     # 这一步是为了清除旧的残留命令，全设为0
-    #     self.commands[env_ids, :] = torch.zeros(
-    #         len(env_ids),
-    #         self.cfg.command.num_commands,
-    #         dtype=torch.float,
-    #         device=self.device,
-    #         requires_grad=False,
-    #     )
-
-    #     # --- 2. 强制直线行走逻辑 (关键修改) ---
-    #     # 我们暂时不看 cfg 里的 range，强制只给 X 方向速度，让它学会迈腿
-    #     # 给定一个明确的前进速度范围 (例如 0.4 到 1.0 m/s)
-    #     # 不要给太小的速度(如 0.1)，否则它可能觉得"不动"是最优解
-    #     self.commands[env_ids, 0] = torch_rand_float(
-    #         0.4, 1.0, (len(env_ids), 1), device=self.device
-    #     ).squeeze(1)
-
-    #     # 强制侧向速度 (Y) 和 旋转速度 (Yaw) 为 0
-    #     self.commands[env_ids, 1] = 0.0
-    #     self.commands[env_ids, 2] = 0.0
-
-    #     # --- 3. Heading Command (如果你开启了 heading 模式) ---
-    #     if self.cfg.command.heading_command:
-    #         self.commands[env_ids, 3] = torch_rand_float(
-    #             self.command_cfgs["heading_range"][0],
-    #             self.command_cfgs["heading_range"][1],
-    #             (len(env_ids), 1),
-    #             device=self.device,
-    #         ).squeeze(1)
-    #         forward = quat_apply(self.env.base_quat[env_ids], self.env.forward_vec[env_ids])
-    #         heading = torch.atan2(forward[:, 1], forward[:, 0])
-    #         # 如果是 heading 模式，Yaw 速度由朝向误差决定，这里会覆盖上面的 0.0
-    #         self.commands[env_ids, 2] = torch.clip(
-    #             0.5 * wrap_to_pi(self.commands[env_ids, 3] - heading), -1.0, 1.0
-    #         )
-
-    #     # --- 4. 锚点环境 (关键辅助轮) ---
-    #     # 强制前 400 个环境保持静止，用于训练机器人"站得稳"
-    #     # 这可以防止随着课程难度增加，机器人忘了怎么站立
-    #     static_env_count = 400
-    #     static_indices = env_ids[env_ids < static_env_count]
-
-    #     if len(static_indices) > 0:
-    #         self.commands[static_indices, :] = 0.0  # 强制所有速度设为 0
-
-    #     # --- 5. 更新静止标志位 (Static Flag) ---
-    #     # 用于奖励函数判断当前是"该动"还是"该静"
-    #     # 阈值设为 0.11，小于这个速度视为静止
-    #     self.static_flag[env_ids] = torch.where(
-    #         torch.norm(self.commands[env_ids, :3], dim=1, keepdim=True) < 0.11,
-    #         False,
-    #         True,
-    #     ).float()
-
-    #     # 再次确保命令与 Flag 同步：
-    #     # 如果 Flag 判定为静止，强制把微小的随机命令归零，防止抖动
-    #     self.commands[env_ids, :3] *= self.static_flag[env_ids]
-
     def _resample_commands(self, env_ids):
         """完全重写：强制仅生成 X 轴直线指令，屏蔽侧向和旋转"""
         # 1. 清除旧命令
@@ -1060,30 +872,6 @@ class LocomotionTask(BaseTask):
         )
 
         self.last_foot_frc = self.env.foot_frc.clone().detach()
-
-        # feet_contact_frc_rew = (
-        #     -torch.norm(self.env.foot_frc * self.foot_swing_mask,
-        #                 dim=1, keepdim=True)
-        #     * self.static_flag
-        # )  # 惩罚“摆动相却受力”
-        # # feet_contact_frc_rew += -torch.norm(
-        # #     (torch.abs(self.env.foot_frc - 250.0)
-        # #      * support_foot_index).clip(min=0.0),
-        # #     dim=1,
-        # #     keepdim=True,
-        # # )  # 惩罚“支撑脚力偏离 250 N”
-        # feet_contact_frc_rew += -torch.sum(
-        #     (20.0 - self.env.foot_frc).clip(min=0.0) * support_foot_index,
-        #     dim=1, keepdim=True
-        # )
-        # feet_contact_frc_rew += torch.sum(
-        #     self.env.foot_frc - 250.0, dim=1, keepdim=True
-        # ).clip(max=0.0) * torch.logical_not(
-        #     self.static_flag
-        # )  # 静止模式下允许“力小”，禁止“力大”
-        # ---------------------------------------------------------------------
-        # 【修复版】足端力奖励逻辑
-        # ---------------------------------------------------------------------
 
         # 1. 摆动相惩罚：摆动脚不应受力（保持原样）
         feet_contact_frc_rew = (
@@ -1399,6 +1187,51 @@ class LocomotionTask(BaseTask):
             dim=1,
             keepdim=True,
         )
+        # ggg
+       # ========== 修复版：左右对称性奖励 ==========
+
+        # 1. 关节力矩对称性 (仅在【静止/站立】时生效)
+        # 站立时，两腿发力应该一样。走路时允许不一样。
+        left_leg_taus = self.joint_tau[:, [2, 3]]   # 左髋pitch, 左膝
+        right_leg_taus = self.joint_tau[:, [7, 8]]  # 右髋pitch, 右膝
+        tau_symmetry_rew = -0.5 * torch.norm(
+            left_leg_taus - right_leg_taus, dim=1, keepdim=True
+        ) * torch.logical_not(self.static_flag)  # 修改：用 not 翻转，让它只在站立(0)时生效
+
+        # 2. 足部接触力对称性 (仅在【静止/站立】时生效)
+        # 站立时，两只脚应该平分体重。走路时必定是一只脚受力大。
+        contact_force_diff = torch.abs(
+            self.foot_frc[:, [0]] - self.foot_frc[:, [1]])
+        foot_force_symmetry_rew = -0.002 * contact_force_diff * \
+            torch.logical_not(self.static_flag)  # 修改
+
+        # 3. 接触时间对称性 (这段代码逻辑不适用于走路，建议直接废弃或仅用于站立)
+        # 走路时相位差是 180 度，一个是 1 一个肯定是 0，算出来 diff 永远是 1，惩罚毫无意义。
+        left_support = self.foot_support_mask[:, [0]].float()
+        right_support = self.foot_support_mask[:, [1]].float()
+        contact_time_diff = torch.abs(left_support - right_support)
+        contact_symmetry_rew = -0.3 * contact_time_diff * \
+            torch.logical_not(self.static_flag)  # 修改
+
+        # --- 新增 4：走路时的“空间步幅对称性”（用来治瘸腿的特效药）---
+        # 走路时 (static_flag=1)，虽然左右脚不可能同时迈出，但它们相对身体中心的距离和应该接近 0。
+        # left_foot_rel_x = self.env.foot_pos[:, 0] - self.env.base_pos[:, 0]
+        # right_foot_rel_x = self.env.foot_pos[:, 3] - self.env.base_pos[:, 0]
+        # step_symmetry_rew = -5.0 * \
+        #     torch.abs(left_foot_rel_x + right_foot_rel_x) * self.static_flag
+        # --- 新增 4：走路时的”空间步幅对称性”（治瘸腿特效药，升级版）---
+        # 使用 _hd (航向坐标系)，这样即使未来机器人转弯，X轴也永远代表它当前的正前方！
+        # 注意：使用 [0:1] 切片保持维度为 (num_envs, 1)，与 static_flag 形状匹配
+        left_foot_rel_x = self.env.foot_pos_hd[:,
+                                               0:1] - self.env.base_pos_hd[:, 0:1]
+        right_foot_rel_x = self.env.foot_pos_hd[:,
+                                                3:4] - self.env.base_pos_hd[:, 0:1]
+        step_symmetry_rew = -5.0 * \
+            torch.abs(left_foot_rel_x + right_foot_rel_x) * self.static_flag
+        # 合并为总对称性奖励
+        symmetry_rew = tau_symmetry_rew + foot_force_symmetry_rew + \
+            contact_symmetry_rew + step_symmetry_rew
+        # end ------------------------------------------------------
 
         lsin = torch.sin(self.foot_phase.clone())
         lcos = torch.cos(self.foot_phase.clone())
@@ -1413,6 +1246,7 @@ class LocomotionTask(BaseTask):
         # is_push = torch.norm(self.env.push_force[:, self.env.push_body_id, :].view(self.num_envs, -1), dim=1, keepdim=True) > 100.
 
         rew_dict = dict(
+            symmetry=symmetry_rew * balance_rew * 1.5,  # ggg
             balance=balance_rew * 0.5,
             fwd_vel=forward_vel_rew * 5.5,
             # yaw_rat=yaw_rate_rew * 2, #原始
