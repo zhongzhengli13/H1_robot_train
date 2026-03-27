@@ -194,6 +194,26 @@ class LocomotionTask(BaseTask):
             requires_grad=False,
         )
 
+        # ========== 新增：步幅追踪变量（用于检测瘸腿）==========
+        # 记录每只脚上一次落地时的前向位置（相对于当时身体）
+        self.last_stride_x = torch.zeros(
+            self.num_envs, self.num_legs,
+            dtype=torch.float,
+            device=self.device,
+        )
+        # 记录上一步的支撑相状态，用于检测"摆动→支撑"的切换
+        self.last_support_mask = torch.ones(
+            self.num_envs, self.num_legs,
+            dtype=torch.bool,
+            device=self.device,
+        )
+        # 记录每只脚的累计步幅（用于奖励计算）
+        self.stride_length = torch.zeros(
+            self.num_envs, self.num_legs,
+            dtype=torch.float,
+            device=self.device,
+        )
+
         # self.joint_vel = torch.clip(self.env.joint_vel, -self.env.dof_vel_limits, self.env.dof_vel_limits)
         # self.joint_pos = torch.clip(self.env.joint_pos, self.env.dof_pos_limits[:, 0], self.env.dof_pos_limits[:, 1])
         self.joint_vel = self.env.joint_vel_his.delay(self.delay_joint_steps)
@@ -302,6 +322,11 @@ class LocomotionTask(BaseTask):
             foot_support_mask_1, foot_support_mask_2
         )
         self.foot_swing_mask = torch.logical_not(self.foot_support_mask)
+
+        # 重置步幅追踪变量
+        self.last_support_mask[env_ids] = self.foot_support_mask[env_ids].clone()
+        self.stride_length[env_ids] = 0.0
+
         self.pm_f = self.phase_modulator.frequency.clone()
         # self.sym_joint_pos = self.joint_pos[:, -5:] if np.random.uniform() < 0.5 else self.joint_pos[:, :5]
         # self.joint_pos_nstep_his = self.joint_pos[:, -5:] if np.random.uniform() < 0.5 else self.joint_pos[:, :5]
@@ -441,6 +466,29 @@ class LocomotionTask(BaseTask):
             foot_support_mask_1, foot_support_mask_2
         )
         self.foot_swing_mask = torch.logical_not(self.foot_support_mask)
+
+        # ========== 新增：步幅追踪（检测摆动→支撑切换）==========
+        # 检测"摆动→支撑"的切换：上一帧是摆动(0)，这一帧是支撑(1)
+        swing_to_support = torch.logical_and(
+            torch.logical_not(self.last_support_mask),
+            self.foot_support_mask
+        )
+        # 获取当前脚相对于身体的前向位置
+        left_foot_rel_x = self.env.foot_pos_hd[:, 0:1] - self.env.base_pos_hd[:, 0:1]
+        right_foot_rel_x = self.env.foot_pos_hd[:, 3:4] - self.env.base_pos_hd[:, 0:1]
+        foot_rel_x = torch.cat([left_foot_rel_x, right_foot_rel_x], dim=1)
+
+        # 当脚从摆动切换到支撑时，记录这个位置作为步幅
+        self.stride_length = torch.where(
+            swing_to_support,
+            foot_rel_x,
+            self.stride_length
+        )
+
+        # 更新上一帧的支撑状态
+        self.last_support_mask = self.foot_support_mask.clone()
+        # ========== 步幅追踪结束 ==========
+
         self.pm_f = self.phase_modulator.frequency.clone().detach()
         if self.env.render or self.env.epochs > 1:
             self.designed_command()
@@ -1188,7 +1236,7 @@ class LocomotionTask(BaseTask):
             keepdim=True,
         )
         # ggg
-       # ========== 修复版：左右对称性奖励 ==========
+       # ========== 升级版：左右对称性奖励（治瘸腿）==========
 
         # 1. 关节力矩对称性 (仅在【静止/站立】时生效)
         # 站立时，两腿发力应该一样。走路时允许不一样。
@@ -1196,41 +1244,42 @@ class LocomotionTask(BaseTask):
         right_leg_taus = self.joint_tau[:, [7, 8]]  # 右髋pitch, 右膝
         tau_symmetry_rew = -0.5 * torch.norm(
             left_leg_taus - right_leg_taus, dim=1, keepdim=True
-        ) * torch.logical_not(self.static_flag)  # 修改：用 not 翻转，让它只在站立(0)时生效
+        ) * torch.logical_not(self.static_flag)
 
         # 2. 足部接触力对称性 (仅在【静止/站立】时生效)
-        # 站立时，两只脚应该平分体重。走路时必定是一只脚受力大。
         contact_force_diff = torch.abs(
             self.foot_frc[:, [0]] - self.foot_frc[:, [1]])
         foot_force_symmetry_rew = -0.002 * contact_force_diff * \
-            torch.logical_not(self.static_flag)  # 修改
+            torch.logical_not(self.static_flag)
 
-        # 3. 接触时间对称性 (这段代码逻辑不适用于走路，建议直接废弃或仅用于站立)
-        # 走路时相位差是 180 度，一个是 1 一个肯定是 0，算出来 diff 永远是 1，惩罚毫无意义。
-        left_support = self.foot_support_mask[:, [0]].float()
-        right_support = self.foot_support_mask[:, [1]].float()
-        contact_time_diff = torch.abs(left_support - right_support)
-        contact_symmetry_rew = -0.3 * contact_time_diff * \
-            torch.logical_not(self.static_flag)  # 修改
+        # 3. 【新增】步幅对称性 (走路时生效)
+        # 追踪每只脚落地时的前向位移（步幅），比较左右脚差异
+        # 如果右脚迈出 0.3m，左脚也应该迈出 0.3m
+        left_stride = self.stride_length[:, [0]]   # 左脚步幅
+        right_stride = self.stride_length[:, [1]]  # 右脚步幅
+        stride_diff = torch.abs(left_stride - right_stride)
+        stride_symmetry_rew = -8.0 * stride_diff * self.static_flag  # 走路时生效
 
-        # --- 新增 4：走路时的“空间步幅对称性”（用来治瘸腿的特效药）---
-        # 走路时 (static_flag=1)，虽然左右脚不可能同时迈出，但它们相对身体中心的距离和应该接近 0。
-        # left_foot_rel_x = self.env.foot_pos[:, 0] - self.env.base_pos[:, 0]
-        # right_foot_rel_x = self.env.foot_pos[:, 3] - self.env.base_pos[:, 0]
-        # step_symmetry_rew = -5.0 * \
-        #     torch.abs(left_foot_rel_x + right_foot_rel_x) * self.static_flag
-        # --- 新增 4：走路时的”空间步幅对称性”（治瘸腿特效药，升级版）---
-        # 使用 _hd (航向坐标系)，这样即使未来机器人转弯，X轴也永远代表它当前的正前方！
-        # 注意：使用 [0:1] 切片保持维度为 (num_envs, 1)，与 static_flag 形状匹配
+        # 4. 【保留】瞬时位置对称性 (走路时生效，作为辅助奖励)
+        # 左右脚相对身体的前向距离和应该接近0（防止身体偏移）
         left_foot_rel_x = self.env.foot_pos_hd[:,
                                                0:1] - self.env.base_pos_hd[:, 0:1]
         right_foot_rel_x = self.env.foot_pos_hd[:,
                                                 3:4] - self.env.base_pos_hd[:, 0:1]
-        step_symmetry_rew = -5.0 * \
+        position_symmetry_rew = -3.0 * \
             torch.abs(left_foot_rel_x + right_foot_rel_x) * self.static_flag
+
+        # 5. 【新增】关节角度对称性 (走路时生效)
+        # 左右髋关节 pitch 角度应该对称（防止一条腿抬得高一条腿抬得低）
+        left_hip_pitch = self.joint_pos[:, [2]]   # 左髋pitch
+        right_hip_pitch = self.joint_pos[:, [7]]  # 右髋pitch
+        hip_pitch_diff = torch.abs(left_hip_pitch - right_hip_pitch)
+        joint_symmetry_rew = -2.0 * hip_pitch_diff * self.static_flag
+
         # 合并为总对称性奖励
-        symmetry_rew = tau_symmetry_rew + foot_force_symmetry_rew + \
-            contact_symmetry_rew + step_symmetry_rew
+        symmetry_rew = (tau_symmetry_rew + foot_force_symmetry_rew +
+                        stride_symmetry_rew + position_symmetry_rew +
+                        joint_symmetry_rew)
         # end ------------------------------------------------------
 
         lsin = torch.sin(self.foot_phase.clone())
