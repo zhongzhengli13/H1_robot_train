@@ -735,7 +735,7 @@ class LocomotionTask(BaseTask):
         return done, time_out
 
     def reward(self, target_pos=None, target_vel=None, real_pos=None, real_vel=None):
-        “””简化版奖励函数：12 个核心项，去掉互相矛盾的惩罚”””
+        # Simplified reward: 14 core terms
         lin_vel_x_norm = (
             torch.clip(torch.abs(self.commands[:, [0]]), min=0.3, max=2.0) + 0.2
         )
