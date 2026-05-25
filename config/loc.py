@@ -29,7 +29,7 @@ class H1Config:
         num_envs = 4096
         env_spacing = 3.0  # not used with heightfields/trimeshes
         send_timeouts = True  # send time out information to the algorithm
-        episode_length_s = 10  # episode length in seconds
+        episode_length_s = 15  # episode length in seconds
 
     class policy(SetDict2Class):
         name = "simple_policy"
@@ -102,8 +102,8 @@ class H1Config:
         # 修改 gem
         # inc_high_ranges = [0.1, 0.1] + [0.3] * 10
         # inc_low_ranges = [-0.1, -0.1] + [-0.3] * 10
-        inc_high_ranges = [3.5, 3.5] + [12.0] * 10
-        inc_low_ranges = [0.5, 0.5] + [-12.0] * 10
+        inc_high_ranges = [3.5, 3.5] + [5.0] * 10
+        inc_low_ranges = [0.5, 0.5] + [-5.0] * 10
 
     class pd_gains(SetDict2Class):
         decimation = 10
@@ -138,14 +138,14 @@ class H1Config:
         #     "elbow": 5,
         # }  # [N*m*s/rad] #原始
         damping = {
-            "hip_yaw": 8.0,
-            "hip_roll": 8.0,
-            "hip_pitch": 8.0,
-            "knee": 9.0,
-            "ankle": 7.0,
-            "torso": 2.0,
-            "shoulder": 2.0,
-            "elbow": 2.0,
+            "hip_yaw": 12.0,
+            "hip_roll": 20.0,
+            "hip_pitch": 12.0,
+            "knee": 15.0,
+            "ankle": 5.0,
+            "torso": 5.0,
+            "shoulder": 5.0,
+            "elbow": 5.0,
         }
 
     class init_state(SetDict2Class):  # 初始状态
@@ -160,7 +160,7 @@ class H1Config:
         # reset_joint_pos = [0.] * 19
 
     class domain_rand(SetDict2Class):  # 域随机化
-        randomize_friction = False
+        randomize_friction = True
         friction_range = [0.65, 1.0]
         randomize_mass = False  # muti
         added_mass_range = [0.9, 1.2]
@@ -222,7 +222,7 @@ class H1Config:
         # if true: compute ang vel command from heading error #False:直接告诉你转多快;Ture:只告诉你“面朝哪”
         heading_command = False
         # 修改
-        lin_vel_x_range = [0.3, 0.7]
+        lin_vel_x_range = [0.3, 0.8]
         # lin_vel_x_range = [-0.1, 0.1]  # 最多向前：0.1 m/s;最多向后：0.1 m/s #原始
         # 修改
         ang_vel_yaw_range = [0, 0]

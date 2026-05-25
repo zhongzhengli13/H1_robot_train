@@ -140,7 +140,7 @@ class LocomotionTask(BaseTask):
             self.debug_net_out_history.append(
                 torch.zeros_like(self.action_low[:12]).repeat(self.num_envs, 1)
             )
-        self.obs_history = deque(maxlen=1)
+        self.obs_history = deque(maxlen=3)
         self.ground_impact_force = None
         Rm = R.from_quat(self.env.base_quat.cpu().numpy())
         self.matrix = torch.as_tensor(
@@ -378,8 +378,8 @@ class LocomotionTask(BaseTask):
         ]  # terrain_origins[level, type] → 某种地形、某个难度，对应的世界坐标起点
 
     def designed_command(self):
-        # 修改 直接给一个恒定的速度
-        self.commands[:, [0]] = 0.4
+        # 评估时给一个恒定速度
+        self.commands[:, [0]] = 0.5
         self.commands[:, [1]] = 0.0
         self.commands[:, [2]] = 0.0  # 不转弯
         self.commands[:, [3]] = 0.0
@@ -648,10 +648,9 @@ class LocomotionTask(BaseTask):
         # 1. 清除旧命令
         self.commands[env_ids, :] = 0.
 
-        # 2. 强制仅给定 X 方向速度 (0.4 ~ 1.0 m/s)
-        # 必须要给一个明确的正向速度，不能太小，否则机器人会因为想“偷懒”而站着不动
+        # 2. 强制仅给定 X 方向速度 (0.3 ~ 0.8 m/s)
         self.commands[env_ids, 0] = torch_rand_float(
-            0.4, 1.0, (len(env_ids), 1), device=self.device
+            0.3, 0.8, (len(env_ids), 1), device=self.device
         ).squeeze(1)
 
         # 3. 强制 Y (侧向) 和 Yaw (旋转) 为 0
@@ -736,46 +735,13 @@ class LocomotionTask(BaseTask):
         return done, time_out
 
     def reward(self, target_pos=None, target_vel=None, real_pos=None, real_vel=None):
-        """
-        状态 s_t
-            ↓
-        策略网络 π(s_t) → action
-            ↓
-        仿真器 → 得到新状态 s_{t+1}
-            ↓
-        reward(s_t, a_t, s_{t+1})  ← 就是你这个函数
-
-        """
-        constant_rew = to_torch([1.0]).repeat(self.num_envs, 1)
+        “””简化版奖励函数：12 个核心项，去掉互相矛盾的惩罚”””
         lin_vel_x_norm = (
-            torch.clip(
-                torch.abs(self.commands[:, [0]]), min=0.3, max=2.0) + 0.2
-        )  # 归一化尺度 #torch.abs(self.commands[:, [0]])->|cmd_vx|
-        # lin_vel_y_norm = torch.clip(torch.abs(self.commands[:, [1]]), min=0.3, max=2.) + 0.2
-        yaw_rate_norm = (
-            torch.clip(
-                torch.abs(self.commands[:, [2]]), min=0.3, max=1.5) + 0.2
+            torch.clip(torch.abs(self.commands[:, [0]]), min=0.3, max=2.0) + 0.2
         )
-        """
-        lateral_vel_rew:
-        k = torch.clip(5.0 / lin_vel_x_norm, 3.0, 15.0) 
-        - 当 vx_cmd 很大 → lin_vel_x_norm 大 → k 小 → 指数衰减慢 → 对同样的 vy 惩罚更轻
-        - 当 vx_cmd 很小 → lin_vel_x_norm 小 → k 大 → 指数衰减速 → 对同样的 vy 惩罚更重
-        物理含义：高速奔跑时：身体自然会有一定侧摆，策略不必过度“僵直”地去抑制 vy，否则容易僵硬、摔倒。低速或原地踏步时：任何不必要的侧移都是“能量浪费”或“平衡差”，惩罚要更严厉。
-        """
-        lateral_vel_rew = torch.exp(
-            -torch.clip(20 / lin_vel_x_norm, min=3.0, max=15.0)
-            * torch.norm(self.env.base_lin_vel[:, [1]], dim=1, keepdim=True) ** 2
-        )  # lateral_vel_rew = exp( −k * vy² ) #原始是5.0/...
-        # 【新增】线性惩罚项！ #修改
-        # 只要有侧向速度，就直接扣分。这样即使漂移很快，梯度依然存在，逼迫网络修正。
-        # lateral_vel_rew -= 2.0 * torch.abs(self.env.base_lin_vel[:, [1]]) #原始
-        lateral_vel_rew -= 3.0 * \
-            torch.abs(self.env.base_lin_vel[:, [1]])  # 修改 new
 
-        base_heit_rew = torch.exp(
-            -60 * (self.env.base_pos[:, [2]] - 1.0) ** 2
-        )  # self.env.base_pos[:, [2]]实际高度；1m 为期望高度
+        # ========== 1. 平衡奖励（站稳是前提）==========
+        base_heit_rew = torch.exp(-60 * (self.env.base_pos[:, [2]] - 1.0) ** 2)
         balance_rew = 0.5 * (
             base_heit_rew
             * torch.exp(
@@ -783,555 +749,109 @@ class LocomotionTask(BaseTask):
                 * torch.norm(self.env.base_euler[:, :2], dim=-1, keepdim=True)
             )
             + 1.0
-        )  # balance_rew = 0.5 * (高度 × 姿态惩罚 + 1). 站稳！
-
-        forward_vel_rew = (
-            torch.exp(
-                -torch.clip(3.0 / lin_vel_x_norm, min=2.0, max=10.0)
-                * (self.commands[:, [0]] - self.env.base_lin_vel[:, [0]]) ** 2
-            )
-            * balance_rew
-        )  # exp(-k * (cmd_vx - real_vx)^2) * balance_rew #原始为4.0/...
-
-        # 原始
-        # yaw_rate_rew = (
-        #     torch.exp(
-        #         -torch.clip(10 / lin_vel_x_norm, min=1.5, max=6.0)
-        #         * (self.commands[:, [2]] - self.env.base_ang_vel[:, [2]]) ** 2
-        #     )
-        #     * balance_rew
-        # )  # exp(-k * (cmd_yaw - real_yaw)^2) * balance_rew #原始2.5/...
-        # ggg
-        yaw_rate_rew = (
-            torch.exp(
-                -torch.clip(10 / lin_vel_x_norm, min=1.5, max=6.0)
-                * (self.commands[:, [2]] - self.env.base_ang_vel[:, [2]]) ** 2
-            )
-            * balance_rew
         )
-        # 追加线性惩罚（去掉 static_flag 约束，始终生效）
-        yaw_rate_rew -= 8.0 * torch.abs(self.env.base_ang_vel[:, [2]])
 
-        lateral_vel_rew += (
-            -0.1
-            / lin_vel_x_norm
-            * torch.norm(self.env.base_lin_vel[:, [1]], dim=1, keepdim=True)
-            * self.static_flag
-        )  # 侧移速度奖励 #乘 static_flag：只有命令速度较大时才启用；原地站直时这条线性惩罚直接归零，避免“僵直”站立也扣分。
-
-        ang_vel_rew = torch.exp(
-            -torch.clip(1.5 / lin_vel_x_norm, min=0.7, max=6.0)
-            * torch.norm(self.env.base_ang_vel[:, :2], dim=1, keepdim=True) ** 2
+        # ========== 2. 前进速度跟踪（核心任务）==========
+        forward_vel_rew = torch.exp(
+            -torch.clip(3.0 / lin_vel_x_norm, min=2.0, max=10.0)
+            * (self.commands[:, [0]] - self.env.base_lin_vel[:, [0]]) ** 2
         )
-        # base_acc_rew = -0.4 / lin_vel_x_norm * torch.norm(
-        #     (self.env.base_acc - to_torch([0, 0, 9.81], device=self.device)) * 0.1,
-        #     dim=1, keepdim=True)
-        #
-        # base_acc_rew *= self.static_flag
+
+        # ========== 3. 侧向速度惩罚 ==========
+        lateral_vel_rew = -2.0 * torch.abs(self.env.base_lin_vel[:, [1]])
+
+        # ========== 4. 偏航角速度跟踪 ==========
+        yaw_rate_rew = torch.exp(
+            -torch.clip(10 / lin_vel_x_norm, min=1.5, max=6.0)
+            * (self.commands[:, [2]] - self.env.base_ang_vel[:, [2]]) ** 2
+        )
+
+        # ========== 5. 垂直速度惩罚（不跳）==========
         vertical_vel_rew = torch.exp(
-            -torch.clip(5.0 / lin_vel_x_norm, min=3.0, max=15.0)
-            * torch.norm(self.env.base_lin_vel[:, [2]], dim=1, keepdim=True) ** 2
-        )
-        vertical_vel_rew -= (
-            0.8
-            / lin_vel_x_norm
-            * torch.norm(self.env.base_lin_vel[:, 1:], dim=1, keepdim=True)
-            * self.static_flag
+            -5.0 * torch.norm(self.env.base_lin_vel[:, [2]], dim=1, keepdim=True) ** 2
         )
 
-        """
-        swing_foot_index		        脚离地 → True（离地 >1 N）
-        support_foot_index		    脚承重 → True（受力 >20 N）
-        self.foot_swing_mask		相位说该摆 → True（φ∈[π,2π)）
-        self.foot_support_mask		相位说该撑 → True（φ∈[0,π)）
+        # ========== 6. 姿态惩罚（不歪）==========
+        twist_rew = -torch.norm(self.env.base_euler[:, :2], dim=-1, keepdim=True)
 
-        """
-
-        support_foot_index = torch.where(
-            self.env.foot_frc >= 20.0, True, False)
+        # ========== 7. 步态相位奖励 ==========
+        support_foot_index = torch.where(self.env.foot_frc >= 20.0, True, False)
         swing_foot_index = torch.where(self.env.foot_frc < 1.0, True, False)
 
-        foot_clear_rew = (
-            torch.sum(
-                torch.logical_and(swing_foot_index, self.foot_swing_mask),
-                dtype=torch.float,
-                dim=1,
-                keepdim=True,
-            )
-            / self.num_legs
-        )  # 意义：防止“该摆不摆”或“拖着地跑”。比例越高说明步态越干净。
+        # 抬脚：摆动相时脚应该离地
+        foot_clear_rew = torch.sum(
+            torch.logical_and(swing_foot_index, self.foot_swing_mask),
+            dtype=torch.float, dim=1, keepdim=True,
+        ) / self.num_legs
 
-        foot_support_rew = (
-            torch.sum(
-                torch.logical_and(support_foot_index, self.foot_support_mask),
-                dtype=torch.float,
-                dim=1,
-                keepdim=True,
-            )
-            / self.num_legs
-        )  # 意义：防止“该撑不撑”或“虚踩”——支撑脚必须真发力。
-        foot_support_rew *= self.static_flag
-        foot_clear_rew *= self.static_flag
+        # 踩地：支撑相时脚应该受力
+        foot_support_rew = torch.sum(
+            torch.logical_and(support_foot_index, self.foot_support_mask),
+            dtype=torch.float, dim=1, keepdim=True,
+        ) / self.num_legs
 
-        foot_support_rew += (
-            torch.sum(support_foot_index, dtype=torch.float,
-                      dim=1, keepdim=True)
-            / self.num_legs
-        )
-
-        foot_heit_score = 50.0 * torch.clip(self.foot_height, min=0.0, max=0.1)
-        foot_height_rew = (
-            torch.sum(self.foot_swing_mask * foot_heit_score, dim=1, keepdim=True).clip(
-                max=5.0
-            )
-            * self.static_flag
-        )
-        # ------------------- 修改这里 -------------------
-        # 原代码: -20.0 * ... (惩罚太重，导致它不敢抬腿，从而跛脚)
-        # 建议修改: -5.0 * ... (降低惩罚，允许偶尔抬高一点)
-        # 同时: 0.1 改为 0.13 (稍微放宽高度阈值)
-        foot_height_rew += -1 * torch.sum(
-            (self.foot_height - 0.15).clip(min=0.0), dim=1, keepdim=True
-        )  # foot_height ≈ 0.1m #惩罚“过度抬脚”
-
-        foot_height_rew += (
-            -0.5
-            * torch.sum(self.foot_support_mask * foot_heit_score, dim=1, keepdim=True)
-            * self.static_flag
-        )  # 惩罚“支撑相却抬脚”
-        foot_height_rew += -0.5 * torch.sum(
-            support_foot_index * foot_heit_score, dim=1, keepdim=True
-        )  # 惩罚“承重脚却抬脚”
-        foot_height_rew += (
-            -0.5
-            * torch.sum(foot_heit_score, dim=1, keepdim=True)
-            * torch.logical_not(self.static_flag)
-        )  # 惩罚“静止时任何脚离地”
-
-        twist_rew = - \
-            torch.norm(self.env.base_euler[:, :2], dim=-1, keepdim=True)
-
-        self.foot_frc_acc = (self.env.foot_frc - self.last_foot_frc).clone()
-        foot_soft_rew = (
-            -0.1
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=1.5)
-            * torch.norm(self.foot_frc_acc, dim=1, keepdim=True)
-            / 100.0
-        )
-
-        self.last_foot_frc = self.env.foot_frc.clone().detach()
-
-        # 1. 摆动相惩罚：摆动脚不应受力（保持原样）
-        feet_contact_frc_rew = (
-            -torch.norm(self.env.foot_frc * self.foot_swing_mask,
-                        dim=1, keepdim=True)
-            * self.static_flag
-        )
-
-        # 2. 支撑相惩罚（修复BUG）：
-        # 原代码使用了 support_foot_index (sensor) 导致逻辑互斥归零。
-        # 修复：必须使用 self.foot_support_mask (phase)，意思是“相位要求你支撑时，如果力不够(小于20N)，就扣分”。
-        # 作用：迫使支撑腿用力踩地，从而释放摆动腿进行抬步，解决拖腿问题。
-        feet_contact_frc_rew += -torch.sum(
-            (20.0 - self.env.foot_frc).clip(min=0.0) * self.foot_support_mask,
-            dim=1, keepdim=True
-        )
-
-        # 3. 静止模式惩罚（修复BUG）：
-        # 原代码逻辑反了（变成了禁止力小）。
-        # 修复：改为 (force - 250).clip(min=0) * -1。
-        # 作用：只有当力超过 250N 时才扣分，允许轻柔站立。
-        # feet_contact_frc_rew += -torch.sum(
-        #     (self.env.foot_frc - 250.0).clip(min=0.0) * torch.logical_not(self.static_flag),
-        #     dim=1, keepdim=True
-        # )
-        # 修改为：
-        # feet_contact_frc_rew += -torch.sum(
-        #     (20.0 - self.env.foot_frc).clip(min=0.0) * self.foot_support_mask, # <--- 修正为 mask
-        #     dim=1, keepdim=True
-        # )
-        feet_contact_frc_rew += -torch.sum(
-            (self.env.foot_frc - 350.0).clip(min=0.0),
-            dim=1, keepdim=True
-        ) * torch.logical_not(self.static_flag)  # 修改 new
-
-        clip_foot_h = torch.abs(self.foot_height) + 0.03
-
-        """
-        foot_vel[..., 0] → x 方向速度（前后）
-        foot_vel[..., 1] → y 方向速度（左右）
-        foot_vel[..., 2] → z 方向速度（上下）
-
-        foot_swing_mask = 1 → 这是摆动脚
-        foot_swing_mask = 0 → 这是支撑脚
-
-        static_flag = 1 → 正在走
-        static_flag = 0 → 静止 / 站立
-
-        """
-        foot_slip_rew = (
-            lin_vel_x_norm
-            * torch.sum(
-                (self.env.foot_vel.view(
-                    self.num_envs, self.num_legs, -1)[:, :, 0])
-                * self.commands[:, [0]].sign()
-                * self.foot_swing_mask,
-                dim=1,
-                keepdim=True,
-            )
-        ).clip(min=0.0, max=1.5) * self.static_flag
-
-        foot_slip_rew += (
-            -0.5
-            * torch.norm(
-                torch.norm(
-                    self.env.foot_vel.view(
-                        self.num_envs, self.num_legs, -1)[:, :, [1]],
-                    dim=-1,
-                ),
-                dim=1,
-                keepdim=True,
-            )
-            * self.static_flag
-        )
-
-        foot_slip_rew += (
-            0.2
-            * torch.norm(
-                0.02
-                * torch.norm(
-                    self.env.foot_vel.view(
-                        self.num_envs, self.num_legs, -1)[:, :, :2],
-                    dim=-1,
-                )
-                / clip_foot_h,
-                dim=1,
-                keepdim=True,
-            )
-            * (self.static_flag - 1.0)
-        )
-
-        foot_slip_rew += (
-            -0.1
-            / lin_vel_x_norm
-            * torch.norm(
-                0.02
-                * torch.norm(
-                    self.env.foot_vel.view(
-                        self.num_envs, self.num_legs, -1)[:, :, :2],
-                    dim=-1,
-                )
-                / clip_foot_h,
-                dim=1,
-                keepdim=True,
-            )
-            * self.static_flag
-            # [:, :, :2]-》平面速度，vx && vy #torch.norm(self.env.foot_vel[... , :2], dim=-1)->slip_speed #命令速度越小，对脚掌在地面上的 任何二维滑移 越不能容忍。
-        )
-
-        foot_vz_rew = (
-            -0.1
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=1.0)
-            * torch.norm(
-                torch.norm(
-                    self.env.foot_vel.view(self.num_envs, self.num_legs, -1)[
-                        :, :, [2]
-                    ].clip(max=0.0),
-                    dim=-1,
-                )
-                / clip_foot_h,
-                dim=1,
-                keepdim=True,
-            )
-            * self.static_flag
-        )
-
-        foot_vz_rew += (
-            0.5
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=1.0)
-            * torch.norm(
-                torch.norm(
-                    self.env.foot_vel.view(self.num_envs, self.num_legs, -1)[
-                        :, :, [2]
-                    ].clip(max=0.0),
-                    dim=-1,
-                ),
-                dim=1,
-                keepdim=True,
-            )
-            * (self.static_flag - 1.0)
-        )
-
-        foot_acc_rew = (
-            -0.4
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=2.0)
-            * torch.norm(self.env.foot_vel[:, [2, 5]], dim=1, keepdim=True)
-        )
-
-        action_smooth_rew = (
-            -0.3
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=2.0)
-            * torch.norm(
-                self.action_history[-3]
-                - 2.0 * self.action_history[-2]
-                + self.action_history[-1],
-                dim=1,
-                keepdim=True,
-            )
-        )
-        net_out_smooth_rew = (
-            -0.2
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=2.0)
-            * torch.norm(
-                (
-                    self.net_out_history[-3]
-                    - 2 * self.net_out_history[-2]
-                    + self.net_out_history[-1]
-                )[:, self.num_legs:],
-                dim=1,
-                keepdim=True,
-            )
-            ** 2
-        )
-
-        action_constraint_rew = (
-            -0.3
-            * torch.clip(1.0 / lin_vel_x_norm, 0, 1.5)
-            * torch.norm((self.env.joint_pos), dim=1, keepdim=True)
-        )
-        action_constraint_rew += (
-            -0.5
-            * torch.clip(1.0 / lin_vel_x_norm, 0, 1.5)
-            * torch.norm((self.env.joint_pos[:, [0, 5]]), dim=1, keepdim=True)
-        )
-        # action_constraint_rew += -2. * torch.norm((self.env.joint_pos[:, [1, 2, 7, 8, 5, 11]]), dim=1, keepdim=True) * self.static_flag
-
-        sa_constraint_rew = (
-            -0.1
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=1.5)
-            * torch.norm(self.env.joint_pos, dim=1, keepdim=True) ** 2
-            * self.static_flag
-        )
-
-        sa_constraint_rew += (
-            -self.static_flag
-            * torch.clip(1.0 / lin_vel_x_norm, 0, 2)
-            * torch.norm(
-                (self.env.joint_pos[:, :5] * support_foot_index[:, [0]]),
-                dim=1,
-                keepdim=True,
-            )
-            ** 2
-        )
-        sa_constraint_rew += (
-            -self.static_flag
-            * torch.clip(1.0 / lin_vel_x_norm, 0, 2)
-            * torch.norm(
-                (self.env.joint_pos[:, 5:10] * support_foot_index[:, [1]]),
-                dim=1,
-                keepdim=True,
-            )
-            ** 2
-        )
-
-        joint_pos_error_rew = (
-            -0.4
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=2.0)
-            * torch.norm(
-                (self.current_joint_act - self.env.joint_pos)[:, :10],
-                dim=1,
-                keepdim=True,
-            )
-            ** 2
-        )
-        # joint_pos_error_rew *= self.static_flag
-
-        joint_velocity_rew = (
-            -0.4
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=1.5)
-            * torch.norm(self.env.joint_vel[:, :], dim=1, keepdim=True) ** 2
-        )
-        # joint_velocity_rew += -torch.clip(1. / lin_vel_x_norm, 0, 2) * torch.norm(self.env.joint_vel[:, [1, 2, 5, 7, 8, 11]], dim=1, keepdim=True) ** 2
-        # joint_velocity_rew *= self.static_flag
-
-        self.last_joint_vels = self.env.joint_vel.clone().detach()
-
-        joint_tor_rew = (
-            -0.4
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=2.0)
-            * torch.sum(
-                (torch.abs(self.env.react_tau[:, :]) - self.env.torque_limits[:]).clip(
-                    min=0.0
-                ),
-                dim=1,
-                keepdim=True,
-            )
-        )
-
-        joint_tor_rew *= self.static_flag
-
-        self.last_foot_vel = self.env.foot_vel.clone().detach()
-        pmf_rew = (
-            -0.02
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=1.5)
-            * torch.norm(
-                (
-                    self.net_out_history[-3]
-                    - 2 * self.net_out_history[-2]
-                    + self.net_out_history[-1]
-                )[:, : self.num_legs],
-                dim=1,
-                keepdim=True,
-            )
-        )
-        pmf_rew += (
-            -1.5
-            * torch.clip(1 / lin_vel_x_norm, 0, 1.5)
-            * torch.norm(
-                self.net_out_history[-1][:,
-                                         : self.num_legs] * self.foot_support_mask,
-                dim=1,
-                keepdim=True,
-            )
-            ** 2
-        )
-        pmf_rew *= self.static_flag
-
-        net_out_val_rew = (
-            -0.4
-            * torch.clip(1.0 / lin_vel_x_norm, min=0.0, max=1.5)
-            * torch.norm(
-                self.net_out_history[-1][:, self.num_legs:], dim=1, keepdim=True
-            )
-            ** 2
-        )
-        # net_out_val_rew *= self.static_flag
-        foot_py_rew = -0.5 * (
-            torch.norm(
-                smallest_signed_angle_between_torch(
-                    self.env.foot_euler[:, [2]], self.env.base_euler[:, [2]]
-                ),
-                dim=1,
-                keepdim=True,
-            )
-        )
-        foot_py_rew += -0.5 * (
-            torch.norm(
-                smallest_signed_angle_between_torch(
-                    self.env.foot_euler[:, [5]], self.env.base_euler[:, [2]]
-                ),
-                dim=1,
-                keepdim=True,
-            )
-        )
-
-        # foot_py_rew += 0.5 * (torch.norm(self.env.foot_euler[:, [1, 4]] * support_foot_index, dim=1, keepdim=True)) * (self.static_flag - 1.)
-        # foot_py_rew += 0.5 * (torch.norm(self.env.foot_euler[:, [0, 3]] * support_foot_index, dim=1, keepdim=True)) * (self.static_flag - 1.)
-
-        leg_width_rew = -torch.norm(
-            torch.abs(self.env.foot_pos_hd[:, [
-                      1, 4]] - self.env.base_pos_hd[:, [1]])
-            - 0.25,
-            dim=1,
-            keepdim=True,
-        )
-        # ggg
-       # ========== 升级版：左右对称性奖励（治瘸腿）==========
-
-        # 1. 关节力矩对称性 (仅在【静止/站立】时生效)
-        # 站立时，两腿发力应该一样。走路时允许不一样。
-        left_leg_taus = self.joint_tau[:, [2, 3]]   # 左髋pitch, 左膝
-        right_leg_taus = self.joint_tau[:, [7, 8]]  # 右髋pitch, 右膝
-        tau_symmetry_rew = -0.5 * torch.norm(
-            left_leg_taus - right_leg_taus, dim=1, keepdim=True
-        ) * torch.logical_not(self.static_flag)
-
-        # 2. 足部接触力对称性 (仅在【静止/站立】时生效)
-        contact_force_diff = torch.abs(
-            self.foot_frc[:, [0]] - self.foot_frc[:, [1]])
-        foot_force_symmetry_rew = -0.002 * contact_force_diff * \
-            torch.logical_not(self.static_flag)
-
-        # 3. 【新增】步幅对称性 (走路时生效)
-        # 追踪每只脚落地时的前向位移（步幅），比较左右脚差异
-        # 如果右脚迈出 0.3m，左脚也应该迈出 0.3m
-        left_stride = self.stride_length[:, [0]]   # 左脚步幅
-        right_stride = self.stride_length[:, [1]]  # 右脚步幅
-        stride_diff = torch.abs(left_stride - right_stride)
-        stride_symmetry_rew = -8.0 * stride_diff * self.static_flag  # 走路时生效
-
-        # 4. 【保留】瞬时位置对称性 (走路时生效，作为辅助奖励)
-        # 左右脚相对身体的前向距离和应该接近0（防止身体偏移）
-        left_foot_rel_x = self.env.foot_pos_hd[:,
-                                               0:1] - self.env.base_pos_hd[:, 0:1]
-        right_foot_rel_x = self.env.foot_pos_hd[:,
-                                                3:4] - self.env.base_pos_hd[:, 0:1]
-        position_symmetry_rew = -3.0 * \
-            torch.abs(left_foot_rel_x + right_foot_rel_x) * self.static_flag
-
-        # 5. 【新增】关节角度对称性 (走路时生效)
-        # 左右髋关节 pitch 角度应该对称（防止一条腿抬得高一条腿抬得低）
-        left_hip_pitch = self.joint_pos[:, [2]]   # 左髋pitch
-        right_hip_pitch = self.joint_pos[:, [7]]  # 右髋pitch
-        hip_pitch_diff = torch.abs(left_hip_pitch - right_hip_pitch)
-        joint_symmetry_rew = -2.0 * hip_pitch_diff * self.static_flag
-
-        # 合并为总对称性奖励
-        symmetry_rew = (tau_symmetry_rew + foot_force_symmetry_rew +
-                        stride_symmetry_rew + position_symmetry_rew +
-                        joint_symmetry_rew)
-        # end ------------------------------------------------------
-
+        # 步态反相：左右脚相位差应为 π
         lsin = torch.sin(self.foot_phase.clone())
         lcos = torch.cos(self.foot_phase.clone())
         foot_phase_rew = (
             -torch.norm(lsin[:, [0]] + lsin[:, [1]], dim=1, keepdim=True) ** 2
+            - torch.norm(lcos[:, [0]] + lcos[:, [1]], dim=1, keepdim=True) ** 2
         )
-        foot_phase_rew += (
-            -torch.norm(lcos[:, [0]] + lcos[:, [1]], dim=1, keepdim=True) ** 2
+
+        # ========== 8. 动作平滑（二阶差分惩罚）==========
+        action_smooth_rew = -torch.norm(
+            self.action_history[-3] - 2.0 * self.action_history[-2] + self.action_history[-1],
+            dim=1, keepdim=True,
         )
-        foot_phase_rew *= self.static_flag
 
-        # is_push = torch.norm(self.env.push_force[:, self.env.push_body_id, :].view(self.num_envs, -1), dim=1, keepdim=True) > 100.
+        # ========== 9. 关节跟踪误差 ==========
+        joint_pos_error_rew = -torch.norm(
+            (self.current_joint_act - self.env.joint_pos)[:, :10],
+            dim=1, keepdim=True,
+        ) ** 2
 
+        # ========== 10. 对称性（治瘸腿）==========
+        left_foot_rel_x = self.env.foot_pos_hd[:, 0:1] - self.env.base_pos_hd[:, 0:1]
+        right_foot_rel_x = self.env.foot_pos_hd[:, 3:4] - self.env.base_pos_hd[:, 0:1]
+        position_symmetry_rew = -torch.abs(left_foot_rel_x + right_foot_rel_x)
+        hip_pitch_diff = torch.abs(self.joint_pos[:, [2]] - self.joint_pos[:, [7]])
+        joint_symmetry_rew = -hip_pitch_diff
+
+        # ========== 11. 脚间距 ==========
+        leg_width_rew = -torch.norm(
+            torch.abs(self.env.foot_pos_hd[:, [1, 4]] - self.env.base_pos_hd[:, [1]]) - 0.25,
+            dim=1, keepdim=True,
+        )
+
+        # ========== 12. 支撑脚力惩罚 ==========
+        feet_contact_frc_rew = -torch.sum(
+            (20.0 - self.env.foot_frc).clip(min=0.0) * self.foot_support_mask,
+            dim=1, keepdim=True,
+        )
+
+        # ========== 汇总 ==========
         rew_dict = dict(
-            symmetry=symmetry_rew * balance_rew * 1.5,  # ggg
-            balance=balance_rew * 0.5,
-            fwd_vel=forward_vel_rew * 5.5,
-            # yaw_rat=yaw_rate_rew * 2, #原始
-            yaw_rat=yaw_rate_rew * 3,  # ggg
-            lateral_vel=lateral_vel_rew * 4,
+            fwd_vel=forward_vel_rew * 5.0,
+            balance=balance_rew * 1.0,
+            lateral_vel=lateral_vel_rew * 2.0,
+            yaw_rat=yaw_rate_rew * 2.0,
             vertical_vel=vertical_vel_rew * 0.5,
-            ang_vel=ang_vel_rew * 0.8,
-            twist=twist_rew * 2.5,
-            foot_clr=foot_clear_rew * balance_rew * 5,
-            foot_supt=foot_support_rew * balance_rew * 0.7,
-            foot_heit=foot_height_rew * balance_rew * 0.8,
-            leg_width_rew=leg_width_rew * balance_rew * 2,
-            act_const=action_constraint_rew * balance_rew * 0.4,
-            sa_const=sa_constraint_rew * balance_rew * 0.2,
-            foot_phase=foot_phase_rew * balance_rew * 4,
-            jnt_pos_err=joint_pos_error_rew * balance_rew * 0.3,
-            act_smo=action_smooth_rew * balance_rew * 0.15,
-            net_smo=net_out_smooth_rew * balance_rew * 0.0005,
-            net_out_val=net_out_val_rew * balance_rew * 0.00001,
-            foot_slip=foot_slip_rew * balance_rew * 1.2,
-            foot_vz=foot_vz_rew * 0.3 * balance_rew,
-            foot_acc=foot_acc_rew * balance_rew * 0.05,
-            foot_sft=foot_soft_rew * 2 * balance_rew,
-            jnt_vel=joint_velocity_rew * balance_rew * 0.05,
-            feet_py=foot_py_rew * balance_rew * 0.5,
-            feet_frc=feet_contact_frc_rew * 0.003,
-            joint_tor=joint_tor_rew * 0.01,
-            pmf=pmf_rew * balance_rew * 0.03,
-        )  # act_smo 是惩罚“动作突变”。虽然为了平滑，但如果权重太大，机器人会觉得“我不动就不会有突变”，导致它不愿意快速响应指令。
+            twist=twist_rew * 1.5,
+            foot_clr=foot_clear_rew * 3.0,
+            foot_supt=foot_support_rew * 1.0,
+            foot_phase=foot_phase_rew * 2.0,
+            act_smo=action_smooth_rew * 0.3,
+            jnt_pos_err=joint_pos_error_rew * 0.2,
+            symmetry=(position_symmetry_rew + joint_symmetry_rew) * 1.0,
+            leg_width=leg_width_rew * 1.0,
+            feet_frc=feet_contact_frc_rew * 0.005,
+        )
         if self.debug:
             self.rew_names = [name for name in rew_dict.keys()]
             self.debug = None
         rewards = torch.cat(
             [
-                torch.clip(value.to(self.device), min=-
-                           4.0, max=5.0) * self.env.dt
+                torch.clip(value.to(self.device), min=-4.0, max=5.0) * self.env.dt
                 for value in rew_dict.values()
             ],
             dim=1,

@@ -57,7 +57,7 @@ class GymEnvWrapper:
         rew = self.task.reward()
         done, time_done = self.task.terminate()
         info = self.task.info()
-        rew_buf = torch.clip(rew.sum(dim=1), min=0.)
+        rew_buf = rew.sum(dim=1)
         # rew_buf = rew.sum(dim=1)
         if self.debug:
             self.record_debug_data(joint_act, rew, obs)
