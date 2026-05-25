@@ -1,180 +1,128 @@
+# H1 人形机器人强化学习行走训练
 
-## Code Structure
-   ```
-train_h1_v0/
-   ├── assets/                 # The URDF model of our robot
-   ├── config/                 # Configuration files
-   ├── env/                    # Simulation environments
-   ├── experiments/            # Pre-trained models and evaluated results
-   ├── model/                  # Neural network architectures
-   ├── utils/                  # Utility functions
-   ├── export_pt2onnx.py       # To export the *.pt pre-trained models to *.onnx Pre-trained models
-   ├── play.py                 # To evaluate the pre-trained models
-   ├── train.py                # To train models
-   ├── tune_pid.py             # To optimize PID parameters to minimize the discrepancy between simulation and real-world robot behavior.
-   ├── tune_urdf.py            # To load and view a urdf model of the robot.
-   ├── tune_env.py             # To load and view the created environments or terrains.
-   ├── requirements.txt        # Additional environment dependencies
-   └── README.md
-   ```
+基于 PPO 算法，在 NVIDIA Isaac Gym 仿真环境中训练 Unitree H1 人形机器人行走。
 
+## 环境要求
 
+- Ubuntu 18.04 / 20.04+
+- NVIDIA GPU（8GB+ 显存），驱动 470+，CUDA 11.4+
+- Python 3.8，PyTorch 2.0.0+
+- Isaac Gym Preview 4
 
-## Installation
+## 安装
 
-### Prerequisites
-- Ubuntu 18.04 or 20.04 or higher
-- NVIDIA driver version 470+
-- Hardware: NVIDIA Pascal or later GPU with at least 8 gb of VRAM
-- Cuda 11.4+ 
-- Python 3.8+
-- PyTorch 2.0.0+
-- Isaac Gym 1.0rc3+ (for simulation environments)
-- Additional dependencies (see `requirements.txt` and `Install dependencies`)
-
-### Steps
-
-1. Create a new conda environment:
 ```bash
-$  conda create -n isaac python==3.8 && conda activate isaac
+# 1. 创建 conda 环境
+conda create -n isaac python==3.8 && conda activate isaac
+
+# 2. 安装 PyTorch
+pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.0
+
+# 3. 安装 Isaac Gym
+tar -zxvf IsaacGym_Preview_4_Package.tar.gz
+cd isaacgym/python && pip install -e .
+
+# 4. 安装依赖
+pip install -r requirements.txt
+pip install matplotlib pandas tensorboard opencv-python numpy==1.23.5 openpyxl
 ```
 
-2. Install dependencies:
+## 训练
+
 ```bash
-    pip3 install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.0
-    tar -zxvf IsaacGym_Preview_4_Package.tar.gz && cd ./isaacgym/python && pip install -e . 
-    pip3 install requirements.txt
-    pip3 install matplotlib pandas tensorboard opencv-python numpy==1.23.5 openpyxl onnxruntime onnx
- ```
-* other packages should be installed if needed
+# 基本训练
+python train.py --name <实验名>
 
-## Notes
-* Some paths are hard-coded in _play.py_, _train.py_, _loc.py_, _tune_urdf.py_, and _tune_pid.py_. Be careful about them.
-* This repository is not maintained anymore. If you have any question, please send emails to yy_chen@mail.sdu.edu.cn.
-* The project can only be run after successful installation.
+# 指定迭代次数
+python train.py --name try_x8 --max_iterations 4000
 
+# 从断点恢复训练
+python train.py --name try_x8 --resume try_x8
 
-## Usage:
-
-### **To train (default:test):**
-```bash
-$ python train.py --config BIRL --name <name>
-```  
-- --name <str> # Experiment name (Default: 'test'), overrides settings in the config file
-  - --config <str> # Experiment configuration file (Default: 'config.loc'), overrides default configuration
-  - --resume <str> # Resume training from checkpoint (Default: test), requires specifying checkpoint 'path'
-  - --render # Boolean flag (Default: False), force display off at all times
-  - --fix_cam # Boolean flag (Default: False), fix camera view on the robot in environment 0
-  - --horovod # Boolean flag (Default: False), enable Horovod multi-GPU training
-  - --rl_device <str> # RL device (Default: 'cuda:0'), supports formats like 'cpu'/'cuda:0'
-  - --num_envs <int> # Number of environments (Default: None), overrides config file settings
-  - --seed <int> # Random seed (Default: None), overrides config file settings
-  - --max_iterations <int> # Maximum number of iterations (Default: None), overrides config file settings
-
-### **To visualize the training logs in a browser:**
-```bash
-$ tensorboard --logdir experiments/ 
-```    
-
-### **To play (default:test):**
-```bash
-$ python play.py --render --name <name>
-```
-#### **To open viewer when training or playing (default:False):**
-```bash
-$ python play.py --name <name> --render
-```
-#### **To change display time when playing (default:4s)**
-```bash
-$ python play.py --name <name> --render --time 10
-```
-#### **To record video when playing (default:False)**
-```bash
-$ python play.py --name <name> --render --time 10 --video
-```
-#### **To save data in Excel when playing (default:False)**
-```bash
-$ python play.py --name <name> --render --time 10 --video --debug
-```
-  - --name <str> # Experiment name (Default: 'test'), overrides settings in the config file
-  - --render # Boolean flag (Default: False), force display off at all times
-  - --fix_cam # Boolean flag (Default: False), fix camera view on the robot in environment 0
-  - --cmp_real # Boolean flag (Default: False), plot curves compared to the real robot
-  - --plt_sim # Boolean flag (Default: False), plot curves in the simulation environment
-  - --num_envs <int> # Number of environments (Default: None), overrides config file settings
-  - --video # Boolean flag (Default: False), record display as video
-  - --time <float> # Evaluation duration (seconds, Default: 10s)
-  - --iter <int> # Specify pre-trained policy by training iteration (Default: None, loads the latest policy in the current directory)
-  - --epochs <int> # Number of evaluation epochs (Default: 1)
-  - --debug # Boolean flag (Default: False), save data to Excel
-
-### **To export the pre-trained *pt models to onnx models (default:test):**
-```bash
-$ python export_pt2onnx.py --name <name>
-```
-  - --name <str> # name of the experiment（default: 'test'），policy.onnx is saved to directory 'name/deploy'
-
-### **To load a urdf model:**
-```bash
-$ python tune_urdf.py
-```
-### To optimize PID parameters to minimize the discrepancy between simulation and real-world robot behavior:**
-```bash
-$ python tune_pid.py
-```
-  - --mode <str> # Test mode: {'sin,', 'real,', 'reset,'}. Select test mode (simulation, real-world, or reset).
-
-## License
-
-This project is licensed under the MIT License —— see the [LICENSE] file —— for details.
-
-## Citation
-
-If you use this code in your research, please cite our work:
-```
-@article{Chen2025GALA,
-  author={Yanyun Chen, Ran Song, Jiapeng Sheng, Xing Fang, Wenhao Tan, Wei Zhang and Yibin Li},
-  journal={IEEE Transactions on Automation Science and Engineering}, 
-  title={A Generalist Agent Learning Architecture for Versatile Quadruped Locomotion}, 
-  year={2025},
-  keywords={Quadruped Robots, Versatile Locomotion, Deep Reinforcement Learning, A Single Policy Network, Multiple Critic Networks}
-}
-
-@article{Sheng2022BioInspiredRL,
-  title={Bio-Inspired Rhythmic Locomotion for Quadruped Robots},
-  author={Jiapeng Sheng and Yanyun Chen and Xing Fang and Wei Zhang and Ran Song and Yuan-hua Zheng and Yibin Li},
-  journal={IEEE Robotics and Automation Letters},
-  year={2022},
-  volume={7},
-  pages={6782-6789}
-}
-
-@article{Liu2024MCLER,
-  author={Liu, Maoqi and Chen, Yanyun and Song, Ran and Qian, Longyue and Fang, Xing and Tan, Wenhao and Li, Yibin and Zhang, Wei},
-  journal={IEEE Robotics and Automation Letters}, 
-  title={MCLER: Multi-Critic Continual Learning With Experience Replay for Quadruped Gait Generation}, 
-  year={2024},
-  volume={9},
-  number={9},
-  pages={8138-8145},
-  keywords={Quadrupedal robots;Task analysis;Continuing education;Optimization;Legged locomotion;Training;Motors;Continual learning;legged robots},
-  doi={10.1109/LRA.2024.3418310}
-}
-
+# 查看训练日志
+tensorboard --logdir experiments/<实验名>/log --bind_all
 ```
 
+### 训练参数
 
-## Contact
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--name` | test3 | 实验名，保存在 `experiments/<name>/` |
+| `--config` | loc | 配置文件（`config/loc.py`） |
+| `--max_iterations` | 8000 | 最大训练轮数 |
+| `--resume` | 无 | 从指定实验的 checkpoint 恢复 |
+| `--render` | False | 训练时开启可视化窗口 |
+| `--rl_device` | cuda:0 | 训练设备 |
 
-For questions or support, please open an issue on GitHub or contact us at [info@vsislab.com].
+## 演示
 
+```bash
+# 可视化演示
+python play.py --name <实验名> --render
 
+# 录制视频（保存到 experiments/<name>/debug/<name>.mp4）
+python play.py --name <实验名> --video
 
+# 指定演示时长（秒）
+python play.py --name <实验名> --render --time 30
 
+# 加载指定 checkpoint
+python play.py --name <实验名> --render --iter 2000
 
+# 保存关节数据到 Excel
+python play.py --name <实验名> --render --debug
 
+# CPU 模式（GPU 显存不足时）
+python play.py --name <实验名> --video --sim_device cpu --rl_device cpu
+```
 
+### 演示参数
 
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--name` | test3 | 实验名 |
+| `--render` | False | 开启可视化窗口 |
+| `--video` | False | 录制视频 |
+| `--time` | 20 | 演示时长（秒） |
+| `--iter` | 无 | 加载指定迭代的 checkpoint（默认加载最新） |
+| `--epochs` | 1 | 评估轮数 |
+| `--debug` | False | 保存数据到 Excel |
+| `--fix_cam` | True | 相机跟随机器人 |
 
+## 导出模型
 
+```bash
+# 导出为 ONNX 格式
+python export_pt2onnx.py --name <实验名>
+```
 
+## 项目结构
+
+```
+legged_rl-final/
+├── config/loc.py              # 超参数配置（PD增益、奖励权重、关节范围等）
+├── env/
+│   ├── legged_robot.py        # Isaac Gym 仿真环境封装
+│   ├── gym_env_wrapper.py     # 环境包装器
+│   └── tasks/
+│       └── locomotion_task.py # 核心：观测、动作、奖励、终止条件
+├── model/simple_policy.py     # Actor-Critic 网络定义
+├── rl/alg/ppo.py              # PPO 算法实现
+├── train.py                   # 训练入口
+├── play.py                    # 演示/推理入口
+└── assets/h1/urdf/h1.urdf    # H1 机器人模型
+```
+
+## 配置说明
+
+主要配置在 `config/loc.py` 中：
+
+- **pd_gains**: PD 控制器刚度和阻尼
+- **action**: 关节增量范围、参考姿态
+- **command**: 速度指令范围
+- **algorithm**: PPO 超参数（学习率、clip、折扣因子等）
+- **domain_rand**: 域随机化（摩擦力、质量、延迟等）
+
+## 英文版
+
+详见 [README_en.md](README_en.md)
