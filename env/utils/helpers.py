@@ -100,11 +100,11 @@ def get_args():
         {"name": "--num_envs", "type": int, "help": "Number of environments to create. Overrides config file if provided."},
         {"name": "--seed", "type": int, "help": "Random seed. Overrides config file if provided."},
         {"name": "--max_iterations", "type": int, "help": "Maximum number of training iterations. Overrides config file if provided."},
-        {"name": "--video", "action": "store_false", "default": False, "help": "record your display"},
+        {"name": "--video", "action": "store_true", "default": False, "help": "record your display"},
         {"name": "--time", "type": float, "default": 20, "help": "display time(seconds)."},
         {"name": "--iter", "type": int, "default": None, "help": "display epoch times."},
         {"name": "--epochs", "type": int, "default": 1, "help": "display epoch times."},
-        {"name": "--debug", "action": "store_false", "default": False, "help": "save data to excel"}
+        {"name": "--debug", "action": "store_true", "default": False, "help": "save data to excel"}
     ]
     # parse arguments store_false store_true
     args = gymutil.parse_arguments(
